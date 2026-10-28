@@ -1,5 +1,10 @@
 node_modules/
+.npm-cache/
 .env
 dist/
 *.log
 .DS_Store
+.env.*
+!.env.example
+.aws-sam/
+samconfig.toml

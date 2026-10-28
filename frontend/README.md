@@ -1,8 +1,8 @@
 # Wavecast (Frontend)
 
-A podcast streaming frontend built with React, Vite, and Tailwind CSS — now connected
-to the companion Node.js backend for real authentication, podcast creation, and
-episode publishing (Cloudinary for audio, ImageKit for cover images).
+A podcast streaming frontend built with React, Vite, and Tailwind CSS. It connects
+to the WaveCast API on AWS Lambda and uploads episode audio and cover art directly
+to private S3 storage using presigned URLs.
 
 ## Structure
 
@@ -58,8 +58,8 @@ the Creator Studio all call it directly.
 
 ## Auth flow
 
-- `AuthContext` calls `/api/auth/*` and stores the returned JWT in `localStorage`
-  (sent as a `Bearer` header) in addition to relying on the backend's httpOnly cookie.
+- `AuthContext` calls `/api/auth/*` and stores the returned JWT in `localStorage`;
+  the API client sends it in a `Bearer` header and also supports the httpOnly cookie.
 - Once signed in as a creator, the navbar shows a **Studio** link and your avatar.
 - `/studio`, `/studio/podcasts`, and `/studio/new` all redirect to `/creator/signin`
   if you're not signed in as a creator.
@@ -69,4 +69,6 @@ the Creator Studio all call it directly.
 - The public Home/Browse/New Releases pages still use mock data in `src/data/podcasts.js`
   so the app looks fully populated out of the box.
 - Podcasts you create for real in the Creator Studio are persisted through the backend
-  (MongoDB + Cloudinary + ImageKit) and are visible at `/studio/podcasts` and `/podcast/:id`.
+  (DynamoDB + S3) and are visible at `/studio/podcasts` and `/podcast/:id`.
+- `CreatePodcast` and `AddEpisode` request short-lived S3 upload URLs, upload media
+  directly to the bucket, then send the S3 object key to the API to publish metadata.

@@ -18,4 +18,13 @@ api.interceptors.request.use((config) => {
 export const getErrorMessage = (err) =>
   err?.response?.data?.message || err?.message || 'Something went wrong. Please try again.'
 
+export const uploadMedia = async (uploadUrl, file, contentType) => {
+  const response = await fetch(uploadUrl, {
+    method: 'PUT',
+    headers: { 'Content-Type': contentType || file.type || 'application/octet-stream' },
+    body: file,
+  })
+  if (!response.ok) throw new Error('Media upload failed. Please try again.')
+}
+
 export default api

@@ -4,7 +4,7 @@ import { Mic, Upload, Square, X, Check, Image as ImageIcon } from 'lucide-react'
 import Navbar from '../components/navbar'
 import Footer from './Footer'
 import { useAuth } from '../context/AuthContext'
-import api, { getErrorMessage } from '../lib/api'
+import api, { getErrorMessage, uploadMedia } from '../lib/api'
 import { categories } from '../data/podcasts'
 
 const categoryNames = categories.map((c) => c.name)
@@ -143,26 +143,32 @@ const CreatePodcast = () => {
 
     setSubmitting(true)
     try {
-      // 1. Create the podcast (with optional cover image)
-      const podcastForm = new FormData()
-      podcastForm.append('title', form.title)
-      podcastForm.append('author', form.author)
-      podcastForm.append('description', form.description)
-      podcastForm.append('category', form.category)
-      podcastForm.append('tags', JSON.stringify(tags))
-      if (coverFile) podcastForm.append('coverImage', coverFile)
+      // Upload media directly to private S3 objects using short-lived presigned URLs.
+      let coverImageKey = ''
+      if (coverFile) {
+        const contentType = coverFile.type || 'image/jpeg'
+        const { data: upload } = await api.post('/podcasts/upload-url', {
+          type: 'cover', fileName: coverFile.name, contentType, fileSize: coverFile.size,
+        })
+        await uploadMedia(upload.uploadUrl, coverFile, contentType)
+        coverImageKey = upload.key
+      }
 
-      const { data: podcastData } = await api.post('/podcasts', podcastForm)
+      const { data: podcastData } = await api.post('/podcasts', {
+        ...form, tags, coverImageKey,
+      })
       const podcastId = podcastData.podcast._id
 
-      // 2. Publish the first episode with the recorded/uploaded audio
-      const episodeForm = new FormData()
-      episodeForm.append('title', form.title)
-      episodeForm.append('description', form.description)
+      // API Gateway never receives the large audio body; the browser sends it to S3.
       const fileName = mode === 'record' ? 'episode.webm' : episodeAudio.name
-      episodeForm.append('audio', episodeAudio, fileName)
-
-      await api.post(`/podcasts/${podcastId}/episodes`, episodeForm)
+      const contentType = episodeAudio.type || 'application/octet-stream'
+      const { data: upload } = await api.post('/podcasts/upload-url', {
+        type: 'audio', fileName, contentType, fileSize: episodeAudio.size, podcastId,
+      })
+      await uploadMedia(upload.uploadUrl, episodeAudio, contentType)
+      await api.post(`/podcasts/${podcastId}/episodes`, {
+        title: form.title, description: form.description, audioKey: upload.key,
+      })
 
       navigate('/studio/podcasts')
     } catch (err) {

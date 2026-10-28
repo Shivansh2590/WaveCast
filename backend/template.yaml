@@ -1,0 +1,259 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: WaveCast serverless API, DynamoDB data, and private S3 media storage.
+
+Parameters:
+  JwtSecret:
+    Type: String
+    NoEcho: true
+    MinLength: 32
+    Description: Random secret used to sign WaveCast session tokens (minimum 32 characters).
+  ClientUrl:
+    Type: String
+    Default: http://localhost:5173
+    Description: Exact browser origin allowed to call the API and upload media.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [x86_64]
+    Timeout: 30
+    MemorySize: 512
+    Environment:
+      Variables:
+        NODE_ENV: production
+        JWT_SECRET: !Ref JwtSecret
+        JWT_EXPIRES_IN: 7d
+        CLIENT_URL: !Ref ClientUrl
+        USERS_TABLE: !Ref UsersTable
+        EMAIL_LOCKS_TABLE: !Ref EmailLocksTable
+        PODCASTS_TABLE: !Ref PodcastsTable
+        EPISODES_TABLE: !Ref EpisodesTable
+        SUBSCRIPTIONS_TABLE: !Ref SubscriptionsTable
+        MEDIA_BUCKET: !Ref MediaBucket
+
+Resources:
+  WaveCastApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref ClientUrl]
+        AllowHeaders: [authorization, content-type]
+        AllowMethods: [GET, POST, PATCH, DELETE, OPTIONS]
+        AllowCredentials: true
+        MaxAge: 600
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: .
+      Handler: src/lambda.handler
+      Policies:
+        - DynamoDBCrudPolicy: { TableName: !Ref UsersTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref EmailLocksTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref PodcastsTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref EpisodesTable }
+        - DynamoDBCrudPolicy: { TableName: !Ref SubscriptionsTable }
+        - S3CrudPolicy: { BucketName: !Ref MediaBucket }
+      Events:
+        ApiRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WaveCastApi
+            Path: /api
+            Method: ANY
+            PayloadFormatVersion: '2.0'
+        ApiProxy:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref WaveCastApi
+            Path: /api/{proxy+}
+            Method: ANY
+            PayloadFormatVersion: '2.0'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/lambda.js
+        Bundle: true
+        Minify: true
+        Sourcemap: false
+        Target: node22
+        Format: esm
+        OutExtension:
+          - .js=.mjs
+
+  UsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+      KeySchema: [{ AttributeName: id, KeyType: HASH }]
+
+  PodcastsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: creator, AttributeType: S }
+        - { AttributeName: feedPartition, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema: [{ AttributeName: id, KeyType: HASH }]
+      GlobalSecondaryIndexes:
+        - IndexName: CreatorIndex
+          KeySchema:
+            - { AttributeName: creator, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+        - IndexName: FeedIndex
+          KeySchema:
+            - { AttributeName: feedPartition, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  EmailLocksTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: email, AttributeType: S }
+      KeySchema: [{ AttributeName: email, KeyType: HASH }]
+
+  EpisodesTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: id, AttributeType: S }
+        - { AttributeName: podcastId, AttributeType: S }
+        - { AttributeName: createdAt, AttributeType: S }
+      KeySchema: [{ AttributeName: id, KeyType: HASH }]
+      GlobalSecondaryIndexes:
+        - IndexName: PodcastIndex
+          KeySchema:
+            - { AttributeName: podcastId, KeyType: HASH }
+            - { AttributeName: createdAt, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+
+  SubscriptionsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      SSESpecification: { SSEEnabled: true }
+      AttributeDefinitions:
+        - { AttributeName: userId, AttributeType: S }
+        - { AttributeName: podcastId, AttributeType: S }
+      KeySchema:
+        - { AttributeName: userId, KeyType: HASH }
+        - { AttributeName: podcastId, KeyType: RANGE }
+
+  MediaBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+      CorsConfiguration:
+        CorsRules:
+          - AllowedOrigins: [!Ref ClientUrl]
+            AllowedMethods: [GET, HEAD, PUT]
+            AllowedHeaders: ['*']
+            ExposedHeaders: [ETag]
+            MaxAge: 3000
+
+  FrontendBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      OwnershipControls:
+        Rules: [{ ObjectOwnership: BucketOwnerEnforced }]
+
+  FrontendOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-frontend-access
+        Description: Private access from CloudFront to the WaveCast frontend bucket.
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  FrontendDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        DefaultRootObject: index.html
+        HttpVersion: http2and3
+        PriceClass: PriceClass_100
+        Origins:
+          - Id: WaveCastFrontendOrigin
+            DomainName: !GetAtt FrontendBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt FrontendOriginAccessControl.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: WaveCastFrontendOrigin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD, OPTIONS]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6
+        CustomErrorResponses:
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+            ErrorCachingMinTTL: 0
+        ViewerCertificate:
+          CloudFrontDefaultCertificate: true
+        IPV6Enabled: true
+
+  FrontendBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref FrontendBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AllowCloudFrontReadOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${FrontendBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${FrontendDistribution}
+
+Outputs:
+  ApiUrl:
+    Description: Set this value as VITE_API_URL (append /api).
+    Value: !Sub https://${WaveCastApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+  MediaBucketName:
+    Value: !Ref MediaBucket
+  FrontendBucketName:
+    Value: !Ref FrontendBucket
+  FrontendDistributionId:
+    Value: !Ref FrontendDistribution
+  FrontendUrl:
+    Value: !Sub https://${FrontendDistribution.DomainName}
+  Region:
+    Value: !Ref AWS::Region

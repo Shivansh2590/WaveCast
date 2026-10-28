@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Upload } from 'lucide-react'
 import Navbar from '../components/navbar'
 import Footer from './Footer'
 import { useAuth } from '../context/AuthContext'
-import api, { getErrorMessage } from '../lib/api'
+import api, { getErrorMessage, uploadMedia } from '../lib/api'
 
 const AddEpisode = () => {
   const { id } = useParams()
@@ -28,11 +28,12 @@ const AddEpisode = () => {
     if (!audio) return setError('Choose an audio file before publishing.')
     setSaving(true); setError('')
     try {
-      const form = new FormData()
-      form.append('title', title)
-      form.append('description', description)
-      form.append('audio', audio)
-      await api.post(`/podcasts/${id}/episodes`, form)
+      const contentType = audio.type || 'application/octet-stream'
+      const { data: upload } = await api.post('/podcasts/upload-url', {
+        type: 'audio', fileName: audio.name, contentType, fileSize: audio.size, podcastId: id,
+      })
+      await uploadMedia(upload.uploadUrl, audio, contentType)
+      await api.post(`/podcasts/${id}/episodes`, { title, description, audioKey: upload.key })
       navigate(`/podcast/${id}`)
     } catch (err) { setError(getErrorMessage(err)) } finally { setSaving(false) }
   }

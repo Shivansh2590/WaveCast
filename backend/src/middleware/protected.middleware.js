@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken'
 import config from '../config/config.js'
-import User from '../models/user.model.js'
+import { getById, tables } from '../services/data.service.js'
 
 
 export const protect = async (req, res, next) => {
@@ -16,14 +16,14 @@ export const protect = async (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, config.jwtSecret)
-    const user = await User.findById(decoded.id)
+    const user = await getById(tables.users, decoded.id)
 
     if (!user) {
       return res.status(401).json({ message: 'User no longer exists.' })
     }
 
     req.user = user
-    next()
+    return next()
   } catch (err) {
     return res.status(401).json({ message: 'Invalid or expired session. Please sign in again.' })
   }
